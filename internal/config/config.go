@@ -5,16 +5,22 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	JWTSecret   string
-	Port        string
+	DatabaseURL        string
+	JWTSecret          string
+	Port               string
+	DBMaxConns         string
+	DBMinConns         string
+	DBMaxConnIdleTime  string
 }
 
 func Load() *Config {
 	return &Config{
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/prompt_management?sslmode=disable"),
-		JWTSecret:   getEnv("JWT_SECRET", "super-secret-jwt-key"),
-		Port:        getEnv("PORT", "8080"),
+		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/prompt_management?sslmode=disable"),
+		JWTSecret:         getEnv("JWT_SECRET", "super-secret-jwt-key"),
+		Port:               getEnv("PORT", "8080"),
+		DBMaxConns:        getEnv("DB_MAX_CONNS", "25"),
+		DBMinConns:        getEnv("DB_MIN_CONNS", "2"),
+		DBMaxConnIdleTime: getEnv("DB_MAX_CONN_IDLE_TIME", "5m"),
 	}
 }
 
