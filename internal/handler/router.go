@@ -32,6 +32,8 @@ func NewRouter(cfg RouterConfig) *http.ServeMux {
 		return middleware.Authenticate(cfg.Config, next)
 	}
 
+	mux.Handle("/auth/refresh", authMW(cfg.Auth.Refresh))
+
 	// Group Endpoints
 	mux.Handle("/prompts/create", authMW(cfg.Management.Create))
 	mux.Handle("/prompts/update", authMW(cfg.Management.Update))
