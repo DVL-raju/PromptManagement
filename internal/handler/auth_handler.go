@@ -1,0 +1,83 @@
+package handler
+
+import (
+	"errors"
+	"net/http"
+
+	"prompt-management/internal/domain"
+	"prompt-management/internal/service"
+	"prompt-management/pkg/response"
+	"prompt-management/pkg/validator"
+)
+
+type AuthHandler struct {
+	service *service.AuthService
+}
+
+func NewAuthHandler(s *service.AuthService) *AuthHandler {
+	return &AuthHandler{service: s}
+}
+
+type registerRequest struct {
+	Email    string `json:"email"`
+	Username string `json:"username"`
+	FullName string `json:"full_name"`
+	Password string `json:"password"`
+}
+
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var input registerRequest
+	err := validator.DecodeAndValidate(r, &input)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	user, err := h.service.Register(r.Context(), input.Email, input.Username, input.FullName, input.Password)
+	if err != nil {
+		if errors.Is(err, domain.ErrConflict) {
+			response.Error(w, http.StatusConflict, "user with this email or username already exists")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "failed to register user")
+		return
+	}
+
+	response.JSON(w, http.StatusCreated, user)
+}
+
+type loginRequest struct {
+	Identifier string `json:"identifier"`
+	Password   string `json:"password"`
+}
+
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var input loginRequest
+	err := validator.DecodeAndValidate(r, &input)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	token, err := h.service.Login(r.Context(), input.Identifier, input.Password)
+	if err != nil {
+		if errors.Is(err, domain.ErrUnauthorized) {
+			response.Error(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "login failed")
+		return
+	}
+
+	response.JSON(w, http.StatusOK, map[string]string{"token": token})
+}

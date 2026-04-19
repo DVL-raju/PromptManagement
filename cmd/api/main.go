@@ -12,13 +12,16 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"prompt-management/internal/config"
+	"prompt-management/internal/handler"
 	"prompt-management/internal/repository/postgres"
+	"prompt-management/internal/service"
 )
 
 type application struct {
-	config *config.Config
-	logger *slog.Logger
-	db     *pgxpool.Pool
+	config  *config.Config
+	logger  *slog.Logger
+	db      *pgxpool.Pool
+	auth    *handler.AuthHandler
 }
 
 func main() {
@@ -36,10 +39,16 @@ func main() {
 	}
 	defer dbPool.Close()
 
+	// 4. Initialize Handlers/Services
+	userRepo := postgres.NewUserRepository(dbPool)
+	authService := service.NewAuthService(cfg, userRepo)
+	authHandler := handler.NewAuthHandler(authService)
+
 	app := &application{
 		config: cfg,
 		logger: logger,
 		db:     dbPool,
+		auth:   authHandler,
 	}
 
 	// 4. Setup Server
