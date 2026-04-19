@@ -31,8 +31,8 @@ type ManagementStore interface {
 
 // ListFilters represents the filtering parameters for listing prompt groups.
 type ListFilters struct {
-	Client  string
-	UseCase string
-	Page    int
-	PerPage int
+	Client  string `json:"client"`
+	UseCase string `json:"use_case"`
+	Page    int    `json:"page"`
+	PerPage int    `json:"per_page"`
 }
