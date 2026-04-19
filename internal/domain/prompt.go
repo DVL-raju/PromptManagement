@@ -14,6 +14,7 @@ type PromptManagement struct {
 	Category     string     `json:"category"`
 	StageName    string     `json:"stage_name"`
 	ActiveItemID *string    `json:"active_item_id"`
+	CreatedByID  string     `json:"created_by_id"`
 	CreatedBy    string     `json:"created_by"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`

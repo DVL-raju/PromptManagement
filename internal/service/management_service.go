@@ -47,7 +47,7 @@ func (s *ManagementService) Create(ctx context.Context, req CreateRequest, userI
 		DocumentType: req.DocumentType,
 		Category:     req.Category,
 		StageName:    req.StageName,
-		CreatedBy:    userID,
+		CreatedByID:  userID,
 	}
 
 	if err := s.repo.Insert(ctx, pm); err != nil {
