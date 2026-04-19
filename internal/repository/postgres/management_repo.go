@@ -21,9 +21,14 @@ func NewManagementRepository(db *pgxpool.Pool) domain.ManagementStore {
 
 func (r *managementRepo) Insert(ctx context.Context, pm *domain.PromptManagement) error {
 	query := `
-		INSERT INTO prompt_management (client, use_case, document_type, category, stage_name, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, created_at, updated_at`
+		WITH inserted AS (
+			INSERT INTO prompt_management (client, use_case, document_type, category, stage_name, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id, created_by, created_at, updated_at
+		)
+		SELECT i.id, i.created_by, u.username, i.created_at, i.updated_at
+		FROM inserted i
+		JOIN users u ON i.created_by = u.id`
 
 	err := r.db.QueryRow(ctx, query,
 		pm.Client,
@@ -31,8 +36,8 @@ func (r *managementRepo) Insert(ctx context.Context, pm *domain.PromptManagement
 		pm.DocumentType,
 		pm.Category,
 		pm.StageName,
-		pm.CreatedBy,
-	).Scan(&pm.ID, &pm.CreatedAt, &pm.UpdatedAt)
+		pm.CreatedByID,
+	).Scan(&pm.ID, &pm.CreatedByID, &pm.CreatedBy, &pm.CreatedAt, &pm.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("could not insert prompt group: %w", err)
@@ -69,9 +74,10 @@ func (r *managementRepo) Update(ctx context.Context, pm *domain.PromptManagement
 
 func (r *managementRepo) GetByID(ctx context.Context, id string) (*domain.PromptManagement, error) {
 	query := `
-		SELECT id, client, use_case, document_type, category, stage_name, active_item_id, created_by, created_at, updated_at
-		FROM prompt_management
-		WHERE id = $1 AND deleted_at IS NULL`
+		SELECT pm.id, pm.client, pm.use_case, pm.document_type, pm.category, pm.stage_name, pm.active_item_id, pm.created_by, u.username, pm.created_at, pm.updated_at
+		FROM prompt_management pm
+		JOIN users u ON pm.created_by = u.id
+		WHERE pm.id = $1 AND pm.deleted_at IS NULL`
 
 	var pm domain.PromptManagement
 	err := r.db.QueryRow(ctx, query, id).Scan(
@@ -82,6 +88,7 @@ func (r *managementRepo) GetByID(ctx context.Context, id string) (*domain.Prompt
 		&pm.Category,
 		&pm.StageName,
 		&pm.ActiveItemID,
+		&pm.CreatedByID,
 		&pm.CreatedBy,
 		&pm.CreatedAt,
 		&pm.UpdatedAt,
@@ -99,20 +106,21 @@ func (r *managementRepo) GetByID(ctx context.Context, id string) (*domain.Prompt
 
 func (r *managementRepo) List(ctx context.Context, f domain.ListFilters) ([]*domain.PromptManagement, int, error) {
 	baseQuery := `
-		FROM prompt_management
-		WHERE deleted_at IS NULL`
+		FROM prompt_management pm
+		JOIN users u ON pm.created_by = u.id
+		WHERE pm.deleted_at IS NULL`
 	
 	args := []interface{}{}
 	argIdx := 1
 
 	if f.Client != "" {
-		baseQuery += fmt.Sprintf(" AND client = $%d", argIdx)
+		baseQuery += fmt.Sprintf(" AND pm.client = $%d", argIdx)
 		args = append(args, f.Client)
 		argIdx++
 	}
 
 	if f.UseCase != "" {
-		baseQuery += fmt.Sprintf(" AND use_case = $%d", argIdx)
+		baseQuery += fmt.Sprintf(" AND pm.use_case = $%d", argIdx)
 		args = append(args, f.UseCase)
 		argIdx++
 	}
@@ -134,9 +142,9 @@ func (r *managementRepo) List(ctx context.Context, f domain.ListFilters) ([]*dom
 	}
 
 	dataQuery := `
-		SELECT id, client, use_case, document_type, category, stage_name, active_item_id, created_by, created_at, updated_at ` +
+		SELECT pm.id, pm.client, pm.use_case, pm.document_type, pm.category, pm.stage_name, pm.active_item_id, pm.created_by, u.username, pm.created_at, pm.updated_at ` +
 		baseQuery +
-		fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+		fmt.Sprintf(" ORDER BY pm.created_at DESC LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
 	
 	args = append(args, f.PerPage, (f.Page-1)*f.PerPage)
 
@@ -157,6 +165,7 @@ func (r *managementRepo) List(ctx context.Context, f domain.ListFilters) ([]*dom
 			&pm.Category,
 			&pm.StageName,
 			&pm.ActiveItemID,
+			&pm.CreatedByID,
 			&pm.CreatedBy,
 			&pm.CreatedAt,
 			&pm.UpdatedAt,
