@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"prompt-management/internal/domain"
+	"prompt-management/internal/middleware"
 	"prompt-management/internal/service"
 	"prompt-management/pkg/response"
 	"prompt-management/pkg/validator"
@@ -69,6 +70,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 3. Generate JWT
 	token, err := h.service.Login(r.Context(), input.Identifier, input.Password)
 	if err != nil {
 		if errors.Is(err, domain.ErrUnauthorized) {
@@ -76,6 +78,29 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.Error(w, http.StatusInternalServerError, "login failed")
+		return
+	}
+
+	response.JSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+// Refresh handles stateless token extensions.
+func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// The UserID is inserted directly by the active authenticate middleware.
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	if !ok || userID == "" {
+		response.Error(w, http.StatusUnauthorized, "invalid session context identity")
+		return
+	}
+
+	token, err := h.service.RefreshToken(r.Context(), userID)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "token refresh generation failed")
 		return
 	}
 

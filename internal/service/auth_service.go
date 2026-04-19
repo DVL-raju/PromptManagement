@@ -95,3 +95,15 @@ func (s *AuthService) Login(ctx context.Context, identifier, password string) (s
 
 	return token, nil
 }
+
+// RefreshToken generates a new JWT token for an already authenticated user, extending their session.
+func (s *AuthService) RefreshToken(ctx context.Context, userID string) (string, error) {
+	// A strictly stateless token refresh mechanism expects the identity to be firmly embedded contextually from upstream authorization middleware.
+	// As we do not track refresh tokens in PostgreSQL, the action natively extends by re-signing a fresh payload matching the originating UserID.
+	token, err := auth.GenerateToken(userID, s.config.JWTSecret, 24*time.Hour)
+	if err != nil {
+		return "", fmt.Errorf("failed to refresh token: %w", err)
+	}
+	
+	return token, nil
+}
