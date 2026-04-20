@@ -80,16 +80,44 @@ All authenticated endpoints require a header passed as:
 
 ### Auth
 - **`POST /auth/register`** - Registers a new user internally (`email`, `username`, `full_name`, `password`).
+  ```bash
+  curl -X POST http://localhost:8080/auth/register \
+       -H "Content-Type: application/json" \
+       -d '{"email":"test@example.com", "username":"testuser", "full_name":"Test User", "password":"password123"}'
+  ```
 - **`POST /auth/login`** - Authenticates the user and dispatches a JWT token string matching internal scopes.
+  ```bash
+  curl -X POST http://localhost:8080/auth/login \
+       -H "Content-Type: application/json" \
+       -d '{"identifier":"test@example.com", "password":"password123"}'
+  ```
 
 ### Prompt Management (Groups)
 The `Management Groups` serve as the absolute parent logic directories.
 - **`POST /prompts/create`** - Create a management group parameters (`client`, `use_case`).
+  ```bash
+  curl -X POST http://localhost:8080/prompts/create \
+       -H "Content-Type: application/json" \
+       -H "Authorization: Bearer <your-jwt-token>" \
+       -d '{"client":"Acme", "use_case":"Support", "document_type":"Email", "category":"Sales", "stage_name":"Initial"}'
+  ```
 - **`POST /prompts/update`** - Update overarching details excluding direct query prompts.
 - **`POST /prompts/list`** - Fetches paginated directories of active mappings merging User interactions.
 
 ### Prompt Items (Versions)
 Prompt `Items` operate within a given Management Group, housing infinite immutable execution iterations.
 - **`POST /prompts/items/add`** - Add a target representation triggering automated `Version Auto-bumping` (`v.1.0.X`).
+  ```bash
+  curl -X POST http://localhost:8080/prompts/items/add \
+       -H "Content-Type: application/json" \
+       -H "Authorization: Bearer <your-jwt-token>" \
+       -d '{"management_id":"<uuid>", "question_key":"Q1", "prompt_text":"Analyze this text"}'
+  ```
 - **`POST /prompts/items/list`** - Return arrays encompassing available configurations sorted against parent parameters.
 - **`POST /prompts/items/promote`** - Transactionally demotes existing structures and executes Live State bindings linking backwards to origin Group properties.
+  ```bash
+  curl -X POST http://localhost:8080/prompts/items/promote \
+       -H "Content-Type: application/json" \
+       -H "Authorization: Bearer <your-jwt-token>" \
+       -d '{"management_id":"<uuid>", "item_id":"<uuid>"}'
+  ```

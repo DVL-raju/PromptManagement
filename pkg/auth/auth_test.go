@@ -31,22 +31,59 @@ func TestJWTToken(t *testing.T) {
 	userID := "user-123"
 	expiration := time.Hour
 
-	token, err := GenerateToken(userID, secret, expiration)
-	if err != nil {
-		t.Fatalf("failed to generate token: %v", err)
-	}
+	t.Run("Valid Token", func(t *testing.T) {
+		token, err := GenerateToken(userID, secret, expiration)
+		if err != nil {
+			t.Fatalf("failed to generate token: %v", err)
+		}
 
-	claims, err := ValidateToken(token, secret)
-	if err != nil {
-		t.Fatalf("failed to validate token: %v", err)
-	}
+		claims, err := ValidateToken(token, secret)
+		if err != nil {
+			t.Fatalf("failed to validate token: %v", err)
+		}
 
-	if claims.UserID != userID {
-		t.Errorf("expected UserID %s, got %s", userID, claims.UserID)
-	}
+		if claims.UserID != userID {
+			t.Errorf("expected UserID %s, got %s", userID, claims.UserID)
+		}
+	})
 
-	_, err = ValidateToken(token, "wrong-secret")
-	if err == nil {
-		t.Error("expected error for wrong secret, got nil")
-	}
+	t.Run("Wrong Secret", func(t *testing.T) {
+		token, err := GenerateToken(userID, secret, expiration)
+		if err != nil {
+			t.Fatalf("failed to generate token: %v", err)
+		}
+
+		_, err = ValidateToken(token, "wrong-secret")
+		if err == nil {
+			t.Error("expected error for wrong secret, got nil")
+		}
+	})
+
+	t.Run("Expired Token", func(t *testing.T) {
+		// Create a token that is already expired
+		token, err := GenerateToken(userID, secret, -time.Hour)
+		if err != nil {
+			t.Fatalf("failed to generate token: %v", err)
+		}
+
+		_, err = ValidateToken(token, secret)
+		if err == nil {
+			t.Error("expected error for expired token, got nil")
+		}
+	})
+
+	t.Run("Tampered Token", func(t *testing.T) {
+		token, err := GenerateToken(userID, secret, expiration)
+		if err != nil {
+			t.Fatalf("failed to generate token: %v", err)
+		}
+
+		// Tamper with the token
+		tamperedToken := token + "tamper"
+
+		_, err = ValidateToken(tamperedToken, secret)
+		if err == nil {
+			t.Error("expected error for tampered token, got nil")
+		}
+	})
 }
