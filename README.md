@@ -103,6 +103,33 @@ The `Management Groups` serve as the absolute parent logic directories.
   ```
 - **`POST /prompts/update`** - Update overarching details excluding direct query prompts.
 - **`POST /prompts/list`** - Fetches paginated directories of active mappings merging User interactions.
+- **`POST /prompts/get`** - Retrieves detailed group metadata plus all associated prompt versions (Aggregated Fetch).
+  ```bash
+  curl -X POST http://localhost:8080/prompts/get \
+       -H "Content-Type: application/json" \
+       -H "Authorization: Bearer <your-jwt-token>" \
+       -d '{"id":"<uuid>"}'
+  ```
+
+### Bulk Operations
+- **`POST /prompts/create-full`** - Atomic creation of a management group and its initial prompt items.
+  ```bash
+  curl -X POST http://localhost:8080/prompts/create-full \
+       -H "Content-Type: application/json" \
+       -H "Authorization: Bearer <your-jwt-token>" \
+       -d '{
+         "client": "Acme",
+         "use_case": "Support",
+         "items": [
+           {
+             "question_key": "Q1",
+             "prompt_text": "Analyze text",
+             "response_schema": {"type": "string"}
+           }
+         ]
+       }'
+  ```
+  *Note: Prompts created via this endpoint are automatically promoted to `active` status (`v1.0.0`).*
 
 ### Prompt Items (Versions)
 Prompt `Items` operate within a given Management Group, housing infinite immutable execution iterations.

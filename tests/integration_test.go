@@ -2,8 +2,6 @@ package tests
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"testing"
 	"time"
 
@@ -33,7 +31,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 		postgres.WithPassword("testpass"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+				WithOccurrence(1).WithStartupTimeout(60*time.Second)),
 	)
 	if err != nil {
 		t.Fatalf("failed to start container: %v", err)
@@ -118,7 +116,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 	itemRepo := pgrepo.NewItemRepository(pool)
 
 	authSvc := service.NewAuthService(cfg, authRepo)
-	mgmtSvc := service.NewManagementService(mgmtRepo)
+	mgmtSvc := service.NewManagementService(pool, mgmtRepo, itemRepo)
 	itemSvc := service.NewItemService(itemRepo)
 
 	// Step 1: Register User
@@ -212,5 +210,147 @@ func TestIntegration_HappyPath(t *testing.T) {
 	}
 	if item2Final.Status != "active" {
 		t.Errorf("expected item2 active, got %s", item2Final.Status)
+	}
+}
+
+func TestIntegration_BulkCreateAndAggregatedFetch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	// Spin up PostgreSQL container
+	postgresContainer, err := postgres.RunContainer(ctx,
+		testcontainers.WithImage("postgres:16-alpine"),
+		postgres.WithDatabase("prompt_management_bulk"),
+		postgres.WithUsername("testuser"),
+		postgres.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(1).WithStartupTimeout(60*time.Second)),
+	)
+	if err != nil {
+		t.Fatalf("failed to start container: %v", err)
+	}
+	defer postgresContainer.Terminate(ctx)
+
+	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("failed to get connection string: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		t.Fatalf("failed to connect to db: %v", err)
+	}
+	defer pool.Close()
+
+	// Setup Schema
+	schema := `
+	CREATE TABLE users (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		email VARCHAR(255) UNIQUE NOT NULL,
+		username VARCHAR(50) UNIQUE NOT NULL,
+		full_name VARCHAR(255) NOT NULL,
+		password_hash VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE prompt_management (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		client VARCHAR(100) NOT NULL,
+		use_case VARCHAR(100) NOT NULL,
+		document_type VARCHAR(100) NOT NULL,
+		category VARCHAR(100) NOT NULL,
+		stage_name VARCHAR(100) NOT NULL,
+		active_item_id UUID,
+		created_by_id UUID REFERENCES users(id),
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE prompt_item (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		management_id UUID REFERENCES prompt_management(id) ON DELETE CASCADE,
+		question_key VARCHAR(100) NOT NULL,
+		prompt_text TEXT NOT NULL,
+		vector_prompt TEXT,
+		generation_config JSONB,
+		response_schema JSONB,
+		top_k NUMERIC,
+		ranking_method VARCHAR(50),
+		version_no VARCHAR(20) NOT NULL,
+		status VARCHAR(20) NOT NULL DEFAULT 'draft',
+		change_log TEXT,
+		created_by_id UUID REFERENCES users(id),
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE (management_id, question_key, version_no)
+	);
+	`
+	_, err = pool.Exec(ctx, schema)
+	if err != nil {
+		t.Fatalf("failed to setup schema: %v", err)
+	}
+
+	cfg := &config.Config{JWTSecret: "test-bulk-secret"}
+	authRepo := pgrepo.NewUserRepository(pool)
+	mgmtRepo := pgrepo.NewManagementRepository(pool)
+	itemRepo := pgrepo.NewItemRepository(pool)
+
+	authSvc := service.NewAuthService(cfg, authRepo)
+	mgmtSvc := service.NewManagementService(pool, mgmtRepo, itemRepo)
+
+	// Register & Setup User
+	user, _ := authSvc.Register(ctx, "bulk@example.com", "bulkuser", "Bulk User", "pass123")
+
+	// Step 1: Perform Bulk Creation
+	t.Log("Testing Bulk Creation...")
+	bulkReq := service.BulkCreateRequest{
+		CreateRequest: service.CreateRequest{
+			Client:       "BulkClient",
+			UseCase:      "BulkUseCase",
+			DocumentType: "JSON",
+			Category:     "Dev",
+			StageName:    "Alpha",
+		},
+		Items: []service.AddItemRequest{
+			{QuestionKey: "key1", PromptText: "Prompt 1"},
+			{QuestionKey: "key2", PromptText: "Prompt 2"},
+		},
+	}
+
+	pm, err := mgmtSvc.CreateFull(ctx, bulkReq, user.ID)
+	if err != nil {
+		t.Fatalf("Bulk CreateFull failed: %v", err)
+	}
+
+	if pm.Client != "BulkClient" || len(pm.Prompts) != 2 {
+		t.Errorf("Bulk creation verification failed. Items: %d", len(pm.Prompts))
+	}
+
+	// Verify auto-promotion
+	for _, p := range pm.Prompts {
+		if p.Status != "active" || p.VersionNo != "v1.0.0" {
+			t.Errorf("Auto-promotion failed for %s: %s (%s)", p.QuestionKey, p.Status, p.VersionNo)
+		}
+	}
+
+	// Step 2: Test Aggregated Fetch (GetByID)
+	t.Log("Testing Aggregated Fetch...")
+	fetched, err := mgmtSvc.GetByID(ctx, pm.ID)
+	if err != nil {
+		t.Fatalf("Aggregated GetByID failed: %v", err)
+	}
+
+	if len(fetched.Prompts) != 2 {
+		t.Errorf("Aggregated fetch failed to return correct item count: %d", len(fetched.Prompts))
+	}
+
+	// Ensure prompts are linked back
+	if fetched.Prompts[0].ManagementID != pm.ID {
+		t.Errorf("Prompt linking failed in aggregated fetch")
 	}
 }
