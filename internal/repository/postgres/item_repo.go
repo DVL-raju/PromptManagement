@@ -48,6 +48,7 @@ func (r *itemRepo) Insert(ctx context.Context, item *domain.PromptItem) error {
 		item.ChangeLog,
 		item.CreatedByID,
 	).Scan(&item.ID, &item.CreatedByID, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt)
+	item.IsActive = (item.Status == "active")
 
 	if err != nil {
 		return fmt.Errorf("could not insert prompt item: %w", err)
@@ -86,6 +87,7 @@ func (r *itemRepo) GetByID(ctx context.Context, id string) (*domain.PromptItem, 
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
+	item.IsActive = (item.Status == "active")
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -189,6 +191,7 @@ func (r *itemRepo) List(ctx context.Context, f domain.ItemListFilters) ([]*domai
 		if err != nil {
 			return nil, 0, fmt.Errorf("could not scan prompt item: %w", err)
 		}
+		item.IsActive = (item.Status == "active")
 		items = append(items, &item)
 	}
 
@@ -237,6 +240,7 @@ func (r *itemRepo) GetActiveItemsByManagementIDs(ctx context.Context, ids []stri
 		if err != nil {
 			return nil, fmt.Errorf("could not scan batch prompt item: %w", err)
 		}
+		item.IsActive = (item.Status == "active")
 		items = append(items, &item)
 	}
 

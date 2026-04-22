@@ -27,6 +27,7 @@ type ManagementStore interface {
 	Insert(ctx context.Context, pm *PromptManagement) error
 	Update(ctx context.Context, pm *PromptManagement) error
 	GetByID(ctx context.Context, id string) (*PromptManagement, error)
+	GetByBusinessKey(ctx context.Context, client, useCase, docType string) (*PromptManagement, error)
 	List(ctx context.Context, filters ListFilters) ([]*PromptManagement, int, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -52,6 +53,7 @@ type PromptItem struct {
 	RankingMethod    *string                `json:"ranking_method"`
 	VersionNo        string                 `json:"version_no"`
 	Status           string                 `json:"status"`
+	IsActive         bool                   `json:"is_active"`
 	ChangeLog        *string                `json:"change_log"`
 	CreatedByID      string                 `json:"created_by_id"`
 	CreatedBy        string                 `json:"created_by"`

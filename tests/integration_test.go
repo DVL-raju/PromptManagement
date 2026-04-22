@@ -514,10 +514,150 @@ func TestIntegration_ListFullRetrieval(t *testing.T) {
 	}
 
 	if len(foundM1.Prompts) != 1 {
-		t.Errorf("Expected 1 active prompt for m1, got %d", len(foundM1.Prompts))
-	} else {
-		if foundM1.Prompts[0].PromptText != "v2" {
-			t.Errorf("Expected active prompt v2, got %s", foundM1.Prompts[0].PromptText)
+			t.Errorf("Expected 1 active prompt for m1, got %d", len(foundM1.Prompts))
+		} else {
+			if foundM1.Prompts[0].PromptText != "v2" {
+				t.Errorf("Expected active prompt v2, got %s", foundM1.Prompts[0].PromptText)
+			}
 		}
+}
+
+func TestIntegration_BulkCreateUpsertAndSorting(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	postgresContainer, err := postgres.RunContainer(ctx,
+		testcontainers.WithImage("postgres:16-alpine"),
+		postgres.WithDatabase("prompt_management_upsert"),
+		postgres.WithUsername("testuser"),
+		postgres.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(1).WithStartupTimeout(60*time.Second)),
+	)
+	if err != nil {
+		t.Fatalf("failed to start container: %v", err)
+	}
+	defer postgresContainer.Terminate(ctx)
+
+	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("failed to get connection string: %v", err)
+	}
+	time.Sleep(2 * time.Second)
+
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		t.Fatalf("failed to connect to db: %v", err)
+	}
+	defer pool.Close()
+
+	// Setup Schema (same as others)
+	schema := `
+	CREATE TABLE users (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		email VARCHAR(255) UNIQUE NOT NULL,
+		username VARCHAR(50) UNIQUE NOT NULL,
+		full_name VARCHAR(255) NOT NULL,
+		password_hash VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMP WITH TIME ZONE
+	);
+	CREATE TABLE prompt_management (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		client VARCHAR(100) NOT NULL,
+		use_case VARCHAR(100) NOT NULL,
+		document_type VARCHAR(100) NOT NULL,
+		category VARCHAR(100) NOT NULL,
+		stage_name VARCHAR(100) NOT NULL,
+		active_item_id UUID,
+		created_by UUID REFERENCES users(id),
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMP WITH TIME ZONE,
+		UNIQUE (client, use_case, document_type)
+	);
+	CREATE TABLE prompt_item (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		management_id UUID REFERENCES prompt_management(id) ON DELETE CASCADE,
+		question_key VARCHAR(100) NOT NULL,
+		prompt_text TEXT NOT NULL,
+		vector_prompt TEXT,
+		generation_config JSONB,
+		response_schema JSONB,
+		top_k NUMERIC,
+		ranking_method VARCHAR(50),
+		version_no VARCHAR(20) NOT NULL,
+		status VARCHAR(20) NOT NULL DEFAULT 'draft',
+		change_log TEXT,
+		created_by UUID REFERENCES users(id),
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMP WITH TIME ZONE,
+		UNIQUE (management_id, question_key, version_no)
+	);
+	`
+	_, err = pool.Exec(ctx, schema)
+	if err != nil {
+		t.Fatalf("failed to setup schema: %v", err)
+	}
+
+	mgmtRepo := pgrepo.NewManagementRepository(pool)
+	itemRepo := pgrepo.NewItemRepository(pool)
+	authRepo := pgrepo.NewUserRepository(pool)
+	authSvc := service.NewAuthService(&config.Config{JWTSecret: "test"}, authRepo)
+	mgmtSvc := service.NewManagementService(pool, mgmtRepo, itemRepo)
+
+	user, _ := authSvc.Register(ctx, "upsert@example.com", "upsertuser", "Upsert User", "pass123")
+
+	// 1. Initial Bulk Create
+	t.Log("Initial bulk creation...")
+	req1 := service.BulkCreateRequest{
+		CreateRequest: service.CreateRequest{Client: "C1", UseCase: "U1", DocumentType: "D1", Category: "Cat1", StageName: "S1"},
+		Items: []service.AddItemRequest{{QuestionKey: "Q1", PromptText: "Initial Text"}},
+	}
+	pm1, err := mgmtSvc.CreateFull(ctx, req1, user.ID)
+	if err != nil {
+		t.Fatalf("First CreateFull failed: %v", err)
+	}
+
+	// 2. Second Bulk Create (Same unique triple)
+	t.Log("Upserting with second bulk creation...")
+	req2 := service.BulkCreateRequest{
+		CreateRequest: service.CreateRequest{Client: "C1", UseCase: "U1", DocumentType: "D1", Category: "UpdatedCat", StageName: "UpdatedStage"},
+		Items: []service.AddItemRequest{{QuestionKey: "Q1", PromptText: "Updated Text"}},
+	}
+	pm2, err := mgmtSvc.CreateFull(ctx, req2, user.ID)
+	if err != nil {
+		t.Fatalf("Second CreateFull (upsert) failed: %v", err)
+	}
+
+	// Verification
+	if pm1.ID != pm2.ID {
+		t.Errorf("Expected same ID for upsert, got %s and %s", pm1.ID, pm2.ID)
+	}
+	if pm2.Category != "UpdatedCat" {
+		t.Errorf("Expected updated category, got %s", pm2.Category)
+	}
+
+	// Verify items and sorting
+	// Detailed fetch
+	detailed, _ := mgmtSvc.GetByID(ctx, pm1.ID)
+	if len(detailed.Prompts) != 2 {
+		t.Errorf("Expected 2 items, got %d", len(detailed.Prompts))
+	}
+
+	// Verify sorting: version v1.0.1 (latest) should be first
+	if detailed.Prompts[0].VersionNo != "v1.0.1" {
+		t.Errorf("Expected first item to be v1.0.1, got %s", detailed.Prompts[0].VersionNo)
+	}
+	if !detailed.Prompts[0].IsActive {
+		t.Errorf("Expected v1.0.1 to be active")
+	}
+	if detailed.Prompts[1].IsActive {
+		t.Errorf("Expected v1.0.0 to NO LONGER be active")
 	}
 }
